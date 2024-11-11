@@ -7,7 +7,7 @@
 
 //As variáveis pipe_name e a message vão agora ser os argumentos passados
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
+    if (argc != 3) {
         fprintf(stderr, "Uso: %s <nome do pipe> <mensagem>\n", argv[0]);
        exit(EXIT_FAILURE);
     }
@@ -25,6 +25,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Escreve a mensagem no pipe
+        printf("Mensagem '%s' enviada ao pipe '%s'.\n", message, pipe_name);
     if (write(pipe_fd, message, strlen(message)) == -1) {
         perror("Erro ao escrever no pipe");
         close(pipe_fd);

@@ -33,7 +33,7 @@ sleep 1
 echo "quit" > "$PIPE_NAME"
 
 # Espera todos os processos terminarem
-wait $AGENT_PID
+wait
 
 # por fim fazemos rm(remove) ao named pipe
 rm "$PIPE_NAME"
