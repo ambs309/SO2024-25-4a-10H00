@@ -10,296 +10,205 @@
 #define BUFFER_SIZE 256
 
 typedef struct {
-    int disciplina;    // ID da disciplina
-    int horario;       // ID do horário
-    int num_lugares;   // Número total de lugares
-    int vagas;         // Número de vagas disponíveis
+    int disciplina;
+    int horario;
+    int numLugares;
+    int vagas;
 } HorarioP;
 
-
-
-
-
-
 typedef struct {
-    int aluno_inicial;
-    int num_alunos;
-    char student_pipe[BUFFER_SIZE];
+    int alunoInicial;
+    int numAlunos;
+    char studentPipe[BUFFER_SIZE];
 } Pedido;
 
-
-
-
-
-HorarioP *horárioP; // Vai ser alocado de maneira dinâmica
+HorarioP *horarioP;
 pthread_mutex_t horarioP_mutex = PTHREAD_MUTEX_INITIALIZER;
-int numeroDeAlunosInscritos = 0;
-int numeroMaxAlunos;
-int nalun;  // Número de alunos que têm de reservar horário
-int NDISCIP, NHOR, NLUG;
+int NDISCIP, NHOR, NLUG, totalAlunosInscritos = 0, totalAlunos;
 char SUPPORT_PIPE[BUFFER_SIZE];
 
+typedef struct ThreadNode {
+    pthread_t thread;
+    struct ThreadNode *next;
+} ThreadNode;
 
-
-
-
+ThreadNode *threadList = NULL;
+pthread_mutex_t threadList_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void inicializarHorario() {
-    int i = 0;
-    for (int i = 0; i < NDISCIP; i++) {
-        for (int j = 0; j < NHOR; j++) {
-            horárioP[i].disciplina = i;
-            horárioP[i].horario = j;
-            horárioP[i].num_lugares = NLUG;
-            horárioP[i].vagas = NLUG;
-            i++;
-        }
+    for (int i = 0; i < NDISCIP * NHOR; i++) {
+        horarioP[i].disciplina = i / NHOR;
+        horarioP[i].horario = i % NHOR;
+        horarioP[i].numLugares = NLUG;
+        horarioP[i].vagas = NLUG;
     }
 }
 
-
-
-
-
-void *processarPedido(void *arg) {//req = pedid
+void *processarPedido(void *arg) {
     Pedido *req = (Pedido *)arg;
-    int alunos_a_inscrever = req->num_alunos;
-    int alunos_inscritos = 0;
+    int alunosInscritos = 0;
 
+    
     pthread_mutex_lock(&horarioP_mutex);
+    for (int i = 0; i < NDISCIP * NHOR && req->numAlunos > 0; i++) {
+        if (horarioP[i].vagas > 0) {
+            int vagasDisponiveis = horarioP[i].vagas;
+            int vagasAInscrever = (req->numAlunos < vagasDisponiveis)
+                                  ? req->numAlunos : vagasDisponiveis;
+            horarioP[i].vagas -= vagasAInscrever;
+            alunosInscritos += vagasAInscrever;
+            req->numAlunos -= vagasAInscrever;
+        }
+    }
+    totalAlunosInscritos += alunosInscritos;
+    pthread_mutex_unlock(&horarioP_mutex);
 
-    // Verificação das vagas disponíveis
-    for (int i = 0; i < NDISCIP * NHOR && alunos_a_inscrever > 0; i++) {
-        if (horárioP[i].vagas > 0) {
-            int vagas_disponiveis = horárioP[i].vagas;
-            int vagas_a_preencher = (alunos_a_inscrever < vagas_disponiveis) ? alunos_a_inscrever : vagas_disponiveis;
-
-            horárioP[i].vagas -= vagas_a_preencher;
-            alunos_inscritos += vagas_a_preencher;
-            alunos_a_inscrever -= vagas_a_preencher;
-            numeroDeAlunosInscritos += vagas_a_preencher;
+    // abrir o pipe do student
+    int studentFd;
+    int attempts = 0;
+    while ((studentFd = open(req->studentPipe,
+                             O_WRONLY | O_NONBLOCK)) == -1) {
+        if (errno == ENXIO || errno == ENOENT) {
+        
+            attempts++;
+            if (attempts >= 5) {
+                perror("Erro ao abrir o named pipe do student");
+                free(req);
+                pthread_exit(NULL);
+            }
+            usleep(100000); 
+        } else {
+            perror("Erro ao abrir o named pipe do student");
+            free(req);
+            pthread_exit(NULL);
         }
     }
 
-    pthread_mutex_unlock(&horarioP_mutex);
-
-
-
-
-
-
-    // Enviar a resposta para o Student
-    int student_fd = open(req->student_pipe, O_WRONLY);
-    if (student_fd == -1) {
-        perror("Erro ao abrir o named pipe do student");
-        free(req);
-        pthread_exit(NULL);
-    }
-
+    // Escrever a resposta no pipe
     char resposta[BUFFER_SIZE];
-    snprintf(resposta, BUFFER_SIZE, "%d", alunos_inscritos);
-
-
-
-
-
-
-
-
-
-
-    // só para garantir que o '\0' é mandado
-    if (write(student_fd, resposta, strlen(resposta) + 1) == -1) {
-        perror("Erro ao escrever no named pipe do student");
-    }
-
-    close(student_fd);
+    snprintf(resposta, BUFFER_SIZE, "%d", alunosInscritos);
+    write(studentFd, resposta, strlen(resposta) + 1);
+    close(studentFd);
     free(req);
 
     pthread_exit(NULL);
 }
 
-
-
-
-
 int main(int argc, char *argv[]) {
     if (argc != 6) {
-        fprintf(stderr, "Uso: %s <nalun> <NDISCIP> <NHOR> <NLUG> <PIPE_NAME>\n", argv[0]);
+        fprintf(stderr,
+                "Uso: %s <nalun> <NDISCIP> <NHOR> <NLUG> <PIPE_NAME>\n",
+                argv[0]);
         exit(EXIT_FAILURE);
     }
 
-
-
-
-
-    nalun = atoi(argv[1]);
+    totalAlunos = atoi(argv[1]);
     NDISCIP = atoi(argv[2]);
     NHOR = atoi(argv[3]);
     NLUG = atoi(argv[4]);
     strncpy(SUPPORT_PIPE, argv[5], BUFFER_SIZE);
 
-    numeroMaxAlunos = NDISCIP * NHOR * NLUG;
+    horarioP = malloc(sizeof(HorarioP) * NDISCIP * NHOR);
+    if (!horarioP) {
+        perror("Erro ao alocar memória");
+        exit(EXIT_FAILURE);
+    }
+    inicializarHorario();
 
-
-
-
-
-
-    // Alocar memória para Horários
-    horárioP = malloc(sizeof(HorarioP) * NDISCIP * NHOR);
-    if (horárioP == NULL) {
-        perror("Erro ao alocar memória para os Horários");
+    if (mkfifo(SUPPORT_PIPE, 0666) == -1 && errno != EEXIST) {
+        perror("Erro ao criar o named pipe do suporte");
         exit(EXIT_FAILURE);
     }
 
-
-
-
-
-    // Inicializar as estruturas de dados
-    inicializarHorario();
-
-
-
-
-
-
-    // Verificar se o named pipe já existe se não existir criamo-lo
-    if (access(SUPPORT_PIPE, F_OK) == -1) {
-        if (mkfifo(SUPPORT_PIPE, 0666) == -1) {
-            perror("Erro ao criar o named pipe do suporte");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-
-
-
-
-
-
-    // Abrir o named pipe para leitura (OPEN READ ONLY)
-    int support_fd = open(SUPPORT_PIPE, O_RDONLY);
-    if (support_fd == -1) {
+    
+    int supportFd = open(SUPPORT_PIPE, O_RDONLY | O_NONBLOCK);
+    if (supportFd == -1) {
         perror("Erro ao abrir o named pipe do suporte");
         unlink(SUPPORT_PIPE);
         exit(EXIT_FAILURE);
     }
 
-
-
-
-
-
     printf("support_agent: Iniciado e pronto para receber pedidos.\n");
 
-
-
-
-
-
-
+    ssize_t n;
     while (1) {
-        // Aqui verificamos as condições para terminar
-        pthread_mutex_lock(&horarioP_mutex);
-        if (numeroDeAlunosInscritos >= nalun || numeroDeAlunosInscritos >= numeroMaxAlunos) {
-            pthread_mutex_unlock(&horarioP_mutex);
+        char buffer[BUFFER_SIZE];
+        int index = 0;
+
+        // Read data from the pipe
+        while ((n = read(supportFd, &buffer[index], 1)) > 0) {
+            if (buffer[index] == '\0')
+                break;
+            index++;
+        }
+
+        if (n == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            
+            usleep(100000); 
+            continue;
+        } else if (n == 0) {
+            
+            usleep(100000);
+            continue;
+        } else if (n == -1) {
+            perror("Erro ao ler do named pipe do suporte");
             break;
         }
-        pthread_mutex_unlock(&horarioP_mutex);
 
-        // Ler a mensagem do named pipe
-        char buffer[BUFFER_SIZE];
-        int j = 0;
-        ssize_t bytesLidos;
+        buffer[index] = '\0';
 
-        // ler carateres até chegar ao '\0'
-        pthread_mutex_lock(&horarioP_mutex); // Excluir outras threads de ler do pipe ao mesmo tempo
-        while ((bytesLidos = read(support_fd, &buffer[j], 1)) > 0) {
-            if (buffer[j] == '\0') {
-                break;
-            }
-            j++;
-            if (j >= BUFFER_SIZE - 1) {
-                fprintf(stderr, "A mensagem é demasiado comprida.\n");
-                break;
-            }
+        if (strcmp(buffer, "EXIT") == 0) {
+            printf("support_agent: Sinal de término recebido. Encerrando.\n");
+            break;
         }
-        pthread_mutex_unlock(&horarioP_mutex);
 
-        if (bytesLidos == -1) {
-            perror("Erro ao ler do named pipe do suporte");
-            continue;
-        } else if (bytesLidos == 0) {
-    // Não há mais dados e não há mais writers, fechar o pipe e SAIR!
-    close(support_fd);
-    break;
-}
-
-
-        buffer[j] = '\0'; // Só para tera a certeza que a String acabou
-
-        // Criar uma nova estrutura de pedido
+        // processar a mensagem
         Pedido *req = malloc(sizeof(Pedido));
-        if (req == NULL) {
-            perror("Erro ao alocar memória para o pedido");
-            continue;
-        }
-
-        // Analisar a mensagem
-        if (sscanf(buffer, "%d %d %s", &req->aluno_inicial, &req->num_alunos, req->student_pipe) != 3) {
+        if (sscanf(buffer, "%d %d %s",
+                   &req->alunoInicial, &req->numAlunos,
+                   req->studentPipe) != 3) {
             fprintf(stderr, "Mensagem inválida recebida: %s\n", buffer);
             free(req);
             continue;
         }
 
-
-
-
-
-        // Criar uma thread para processar o pedido
         pthread_t thread;
-        if (pthread_create(&thread, NULL, processarPedido, req) != 0) {
-            perror("Erro ao criar a thread");
-            free(req);
-            continue;
-        }
+        pthread_create(&thread, NULL, processarPedido, req);
 
-
-
-
-        // Desvincular a thread para que os seus recursos sejam liberados automaticamente
-        pthread_detach(thread);
+       
+        pthread_mutex_lock(&threadList_mutex);
+        ThreadNode *newNode = malloc(sizeof(ThreadNode));
+        newNode->thread = thread;
+        newNode->next = threadList;
+        threadList = newNode;
+        pthread_mutex_unlock(&threadList_mutex);
     }
 
-    close(support_fd);
-    unlink(SUPPORT_PIPE);
+    // Juntar as Therads antes de sair
+    pthread_mutex_lock(&threadList_mutex);
+    ThreadNode *current = threadList;
+    while (current != NULL) {
+        pthread_join(current->thread, NULL);
+        ThreadNode *temp = current;
+        current = current->next;
+        free(temp);
+    }
+    pthread_mutex_unlock(&threadList_mutex);
 
-    printf("support_agent: Todos os alunos foram inscritos ou não há mais vagas.\n");
-
-
-
-
-
-
-    // Imprimir o estado final dos horários
+    printf("Todos os alunos foram processados ou não há mais vagas.\n");
     printf("Estado final dos horários:\n");
     for (int i = 0; i < NDISCIP * NHOR; i++) {
         printf("Disciplina %d, Horário %d: Vagas restantes = %d\n",
-               horárioP[i].disciplina,
-               horárioP[i].horario,
-               horárioP[i].vagas);
+               horarioP[i].disciplina, horarioP[i].horario,
+               horarioP[i].vagas);
     }
+    printf("Total de alunos inscritos: %d\n", totalAlunosInscritos);
+    printf("Total de alunos não inscritos: %d\n",
+           totalAlunos - totalAlunosInscritos);
 
-
-
-
-
-
-    // AQUI SIM! "Limpamos a casa"
-    free(horárioP);
-    pthread_mutex_destroy(&horarioP_mutex);
+    close(supportFd);
+    unlink(SUPPORT_PIPE); // MANDAR O SUPPORT PIPE IR DAR UMA VOLTA AO BILHAR GRANDE
+    free(horarioP);
 
     return 0;
 }
