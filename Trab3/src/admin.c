@@ -48,10 +48,10 @@ int main() {
             scanf("%d", &numAluno);
             snprintf(mensagem, BUFFER_SIZE, "1,%d,%s", numAluno, pipeResposta);
         } else if (opcao == 2) {
-            char ficheiro[BUFFER_SIZE];
+            char nomeFicheiro[BUFFER_SIZE];
             printf("Nome do ficheiro: ");
-            scanf("%s", ficheiro);
-            snprintf(mensagem, BUFFER_SIZE, "2,%s,%s", ficheiro, pipeResposta);
+            scanf("%s", nomeFicheiro);
+            snprintf(mensagem, BUFFER_SIZE, "2,%s,%s", nomeFicheiro, pipeResposta);
         } else if (opcao == 3) {
             snprintf(mensagem, BUFFER_SIZE, "3,%s", pipeResposta);
             enviarPedido(pipeAdmin, mensagem, pipeResposta);

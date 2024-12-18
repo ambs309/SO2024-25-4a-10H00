@@ -50,14 +50,13 @@ int main(int argc, char *argv[]) {
 
     for (int i = 0; i < numAlunos; i++) {
         int aluno = alunoInicial + i;
-        int disciplinas[5];
+        char respostaFinal[BUFFER_SIZE] = "";
 
-        for (int j = 0; j < 5; j++) {
-            disciplinas[j] = rand() % 10;
-
-            // Enviar pedido
+        for (int j = 0; j < 5; j++) { // Cada aluno inscreve-se em 5 disciplinas
+            int disciplina = rand() % 10; // 10 disciplinas: 0 a 9
             char mensagem[BUFFER_SIZE];
-            snprintf(mensagem, BUFFER_SIZE, "%d,%d,%s", aluno, disciplinas[j], pipeAluno);
+
+            snprintf(mensagem, BUFFER_SIZE, "%d,%d,%s", aluno, disciplina, pipeAluno);
             write(suporteFd, mensagem, strlen(mensagem) + 1);
 
             // Receber resposta
@@ -66,12 +65,19 @@ int main(int argc, char *argv[]) {
                 perror("Erro ao abrir pipe aluno");
                 continue;
             }
+
             char resposta[BUFFER_SIZE];
             read(alunoFd, resposta, BUFFER_SIZE);
             close(alunoFd);
 
-            printf("student %d, aluno %d: %d/%s\n", nstud, aluno, disciplinas[j], resposta);
+            // Adicionar disciplina/horário ao buffer
+            char temp[50];
+            snprintf(temp, sizeof(temp), "%s%d/%s", (j > 0 ? ", " : ""), disciplina, resposta);
+            strncat(respostaFinal, temp, sizeof(respostaFinal) - strlen(respostaFinal) - 1);
         }
+
+        // Imprime resultado acumulado para o aluno
+        printf("student %d, aluno %d: %s\n", nstud, aluno, respostaFinal);
     }
 
     close(suporteFd);
